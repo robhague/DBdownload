@@ -55,7 +55,7 @@ def remove_trailing_sep(path):
         return path
 
 class DBDownload(object):
-    def __init__(self, remote_dir, local_dir, cache_file, sleep=600, prg=None):
+    def __init__(self, remote_dir, local_dir, cache_file, options):
         self._logger = logging.getLogger(LOGGER)
 
         # Normalize the source and target paths by ensuring that the
@@ -69,9 +69,10 @@ class DBDownload(object):
 
         self.cache_file = cache_file
 
-        self.sleep = sleep
+        self.sleep = options['interval']
+        self.num = options['num']
 
-        self.executable = prg
+        self.executable = options['exec']
 
         self._tree = {}
         self._token = None
@@ -112,7 +113,7 @@ class DBDownload(object):
 
         tree = {}
         changed = False
-        while True:
+        while True: # May exit with a break if --num is used
             # check for anything missing locally
             changed = self._check_missing()
 
@@ -147,6 +148,16 @@ class DBDownload(object):
 
                 if changed and self.executable:
                     self._launch(self.executable)
+
+                # Break if we've reached then end of a fixed number of checks
+                if self.num > 0:
+                    self.num = self.num-1
+                    if self.num == 0:
+                        break
+                    elif self.num == 1:
+                        self._logger.debug("1 check remaining")
+                    else:
+                        self._logger.debug("%d checks remaining" % self.num)
 
                 # done processing delta, sleep and check again
                 tree = {}
@@ -425,11 +436,14 @@ def create_logger(log, verbose):
 def main():
     options = {'log': '/tmp/dbdownload.log', 'config': '/etc/dbdownload.conf',
                'cache': '~/.dbdownload.cache', 'interval': 300, 'source': None,
-               'target': None, 'verbose': False, 'reset': False, 'exec': None}
+               'target': None, 'verbose': False, 'reset': False, 'exec': None,
+               'num': -1}
 
     # first parse any command line arguments
     parser = OptionParser(description='Do one-way Dropbox synchronization')
     parser.add_option('--interval', '-i', type=int, help='check interval')
+    parser.add_option('--num', '-n', type=int,
+                      help='number of checks to perform')
     parser.add_option('--config', '-c', help='configuration file')
     parser.add_option('--cache', '-a', help='cache file')
     parser.add_option('--log', '-l', help='logfile')
@@ -466,7 +480,7 @@ def main():
     logger.info('*** DBdownload %s starting up ***' % (VERSION))
 
     dl = DBDownload(options['source'], options['target'], options['cache'],
-                    options['interval'], options['exec'])
+                    options)
     if options['reset']:
         dl.reset()
     dl.start()
