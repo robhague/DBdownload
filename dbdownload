@@ -47,15 +47,25 @@ def decode_dropbox_key(key):
     # return '|'.join([b64encode(key), b64encode(''.join(result))])
     return ''.join(result).split('?', 2)
 
+def remove_trailing_sep(path):
+    "A utility to remove trailing path separators from filenames"
+    if path[-1] == os.path.sep:
+        return path[:-1]
+    else:
+        return path
 
 class DBDownload(object):
     def __init__(self, remote_dir, local_dir, cache_file, sleep=600, prg=None):
         self._logger = logging.getLogger(LOGGER)
 
-        self.remote_dir = remote_dir.lower()
+        # Normalize the source and target paths by ensuring that the
+        # remote path is absolute, and removing trailing separators
+        # from both. This is required for correct functioning of
+        # _local2remote() and _remote2local().
+        self.remote_dir = remove_trailing_sep(remote_dir.lower())
         if not self.remote_dir.startswith(os.path.sep):
             self.remote_dir = ''.join([os.path.sep, self.remote_dir])
-            self.local_dir = local_dir
+        self.local_dir = remove_trailing_sep(local_dir)
 
         self.cache_file = cache_file
 
