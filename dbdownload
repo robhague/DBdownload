@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import httplib
 import json
 import locale
 import logging
@@ -7,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib
 from base64 import b64decode
 from ConfigParser import SafeConfigParser
 from optparse import OptionParser
@@ -71,12 +73,14 @@ class DBDownload(object):
 
         self.sleep = options['interval']
         self.num = options['num']
+        self.poll = options['poll']
 
         self.executable = options['exec']
 
         self._tree = {}
         self._token = None
         self._cursor = None
+        self._longpoll_backoff = 0
         self._load_state()
 
         key, secret = decode_dropbox_key(APP_KEY)
@@ -159,10 +163,39 @@ class DBDownload(object):
                     else:
                         self._logger.debug("%d checks remaining" % self.num)
 
-                # done processing delta, sleep and check again
+                # done processing delta, wait and check again
                 tree = {}
-                self._logger.debug('sleeping for %d seconds' % (self.sleep))
-                time.sleep(self.sleep)
+
+                if self.poll:
+                    # Long poll
+                    while not self._longpoll_has_changed(): pass
+                else:
+                    # Fixed sleep
+                    self._logger.debug('sleeping for %d seconds' % (self.sleep))
+                    time.sleep(self.sleep)
+
+    def _longpoll_has_changed(self):
+        time.sleep(self._longpoll_backoff)
+        self._longpoll_backoff = 0
+        self._logger.debug('Long polling...')
+        conn = httplib.HTTPSConnection('api-notify.dropbox.com')
+        conn.request('GET', '/1/longpoll_delta?'+
+                     urllib.urlencode({'cursor': self._cursor,
+                                       'timeout': self.sleep}))
+        res = conn.getresponse()
+        if res.status == 200:
+            data = json.load(res)
+            self._longpoll_backoff = int(data.get('backoff',0))
+            changes = data.get('changes', True)
+            self._logger.debug('Long polling detected changes: %s' % changes)
+            return changes
+        else:
+            # Longpoll failed; sleep the default amount, then assume
+            # changes
+            self._logger.debug('Long poll failed; sleeping...')
+            time.sleep(self.sleep)
+            return True
+
 
     # launch a program if anything has changed
     def _launch(self, prg):
@@ -437,13 +470,15 @@ def main():
     options = {'log': '/tmp/dbdownload.log', 'config': '/etc/dbdownload.conf',
                'cache': '~/.dbdownload.cache', 'interval': 300, 'source': None,
                'target': None, 'verbose': False, 'reset': False, 'exec': None,
-               'num': -1}
+               'num': -1, 'poll': False}
 
     # first parse any command line arguments
     parser = OptionParser(description='Do one-way Dropbox synchronization')
     parser.add_option('--interval', '-i', type=int, help='check interval')
     parser.add_option('--num', '-n', type=int,
                       help='number of checks to perform')
+    parser.add_option('--poll', '-p', action='store_true',
+                      help='use the polling low-latency API')
     parser.add_option('--config', '-c', help='configuration file')
     parser.add_option('--cache', '-a', help='cache file')
     parser.add_option('--log', '-l', help='logfile')
